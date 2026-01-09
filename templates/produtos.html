@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <title>Produtos Sraping</title>
+    <style type="text/tailwindcss">
+        * {
+            transition-property: all;
+            transition-timing-function: var(--default-transition-timing-function); /* cubic-bezier(0.4, 0, 0.2, 1) */
+            transition-duration: var(--default-transition-duration); /* 150ms */
+      }
+    </style>
+    <script>
+
+        function formmat(value) {
+            return value.toLocaleString('pt-BR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+
+    </script>
+
+</head>
+
+<body class="flex flex-col justify-center items-center w-full p-4 bg-neutral-200 ">
+
+    <h1>Produtos coletados</h1>
+
+
+
+
+    <div id="items" class="w-4/5 grid grid-cols-4 p-4 gap-5">
+        {% for p in produtos %}
+
+
+        <div id="item"
+            class="flex flex-col justify-center items-center gap-4 p-4 col-span-1 rounded-2xl bg-white hover:scale-[1.05]">
+
+            <img src="{{ p.img_link}} " alt="" class="object-contain bg-none">
+            <span class="w-full flex flex-col justify-start items-start">
+                <p class="font-bold h-12 line-clamp-2"> {{ p.product }}</p>
+                <p class="font-normal"> {{ p.seller }} </p>
+            </span>
+            <span class="w-full flex justify-center items-center gap-2">
+                <span class="w-1/2 flex flex-col justify-start items-start">
+                    <p> de <b class="line-through text-sm"> R$ {{ p.old_price | br_currency }} </b> </p>
+                    <p class="tracking-wider"> por <b class="text-lg"> R$ {{ p.current_price | br_currency }}</b> </p>
+                </span>
+                <a class="w-1/2 h-10 bg-yellow-300 rounded-xl flex justify-center items-center font-semibold hover:opacity-50"
+                    href="{{ p.source }}" target="_blank">
+                    Acessar
+                </a>
+            </span>
+
+            <span class="text-sm text-gray-500">
+                Coletado: {{ p.created_at | br_datetime }}
+            </span>
+
+        </div>
+
+
+        {% endfor %}
+
+    </div>
+
+
+
+
+</body>
+
+</html>
