@@ -111,7 +111,7 @@ def connectDb():
 
 load_dotenv()
 # URL padrão para testes caso a ENV falhe
-url = os.environ.get("URL", "https://lista.mercadolivre.com.br/monitor-gamer") 
+url = os.environ.get("URL", "https://www.mercadolivre.com.br/ofertas#nav-header") 
 
 print("--- INICIANDO SCRAPER (HEADLESS NEW) ---")
 
@@ -229,3 +229,4 @@ else:
         conn.close()
 
 print("Fim do scraping.")
+
