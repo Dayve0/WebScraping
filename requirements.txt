@@ -1,5 +1,6 @@
 streamlit
-requests
+selenium
+selenium-stealth
 beautifulsoup4
 pandas
 lxml
