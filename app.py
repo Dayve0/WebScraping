@@ -3,6 +3,7 @@ import sqlite3
 import subprocess
 import pandas as pd
 import os
+import sys
 
 # Configuração da página
 st.set_page_config(page_title="Monitor ML", layout="wide")
@@ -17,15 +18,18 @@ st.title("🛒 Monitor de Preços - SQLite")
 if st.button("🔄 Atualizar Dados"):
     with st.spinner('Rodando scraper...'):
         try:
-            # Chama o scraper.py
-            result = subprocess.run(["python", "scraper.py"], capture_output=True, text=True)
+            # USANDO sys.executable: Garante que usa o mesmo Python que tem o Pandas instalado
+            result = subprocess.run([sys.executable, "scraper.py"], capture_output=True, text=True)
+            
             # Mostra logs para debug
             st.text(result.stdout)
+            
             if result.returncode == 0:
                 st.success("Dados atualizados!")
+                st.rerun() # Recarrega a página para mostrar os dados novos na hora
             else:
                 st.error("Erro no script.")
-                st.code(result.stderr)
+                st.code(result.stderr) # Mostra o erro na tela se houver
         except Exception as e:
             st.error(f"Erro ao executar: {e}")
 
@@ -60,3 +64,4 @@ if os.path.exists('dados.db'):
         st.error(f"Erro ao ler banco: {e}")
 else:
     st.warning("Arquivo 'dados.db' ainda não existe. Rode o scraper pela primeira vez.")
+
