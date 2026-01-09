@@ -3,85 +3,66 @@ import sqlite3
 import subprocess
 import sys
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+st.set_page_config(page_title="Monitor ML", layout="wide")
 
-st.set_page_config(page_title="Produtos Scraping", layout="wide")
-
-# Funções de formatação
-def format_currency(value):
-    if value is None: return "R$ 0,00"
-    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def format_date(value):
-    if not value: return ""
-    # Se vier como string do SQLite, tenta converter ou exibir direto
-    return str(value)
-
-# Conexão SQLite
-def get_db_connection():
+def get_connection():
+    if not os.path.exists('dados.db'):
+        return None
     return sqlite3.connect('dados.db')
 
-st.title("🛒 Produtos Coletados (SQLite)")
+st.title("🕵️ Monitor de Preços - Debug Mode")
 
-# Botão de execução
-if st.button("🔄 Rodar Scraper Novamente"):
-    with st.spinner("Rodando o robô... aguarde."):
-        try:
-            # sys.executable garante que usa o python correto
-            result = subprocess.run(
-                [sys.executable, "scraper.py"], 
-                capture_output=True, 
-                text=True,
-                encoding='utf-8'
-            )
-            
-            if result.returncode == 0:
-                st.success("Atualizado com sucesso!")
-                st.rerun()
-            else:
-                st.error("Erro no scraper:")
-                st.code(result.stderr) # Mostra o erro real
-                st.text("Logs de saída:")
-                st.code(result.stdout)
-        except Exception as e:
-            st.error(f"Erro crítico: {e}")
-
-# Exibir dados
-if os.path.exists('dados.db'):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        # Retorna dicionário para facilitar
-        cursor.row_factory = sqlite3.Row 
+# Botão de Ação
+if st.button("🔄 Executar Scraper (Ver Logs)"):
+    with st.spinner("O robô está trabalhando..."):
+        # Roda o script e captura TUDO o que ele imprimir
+        process = subprocess.run(
+            [sys.executable, "scraper.py"], 
+            capture_output=True, 
+            text=True,
+            encoding='utf-8' # Força UTF-8 para não dar erro de caractere
+        )
         
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM products ORDER BY created_at DESC")
-        produtos = cursor.fetchall()
+        # Mostra o resultado na tela (Debug)
+        with st.expander("Ver Detalhes da Execução (Logs)", expanded=True):
+            st.write("Saída do Script:")
+            st.code(process.stdout) # Aqui vai aparecer os prints do scraper.py
+            
+            if process.stderr:
+                st.write("Erros encontrados:")
+                st.error(process.stderr)
+        
+        if "Dados salvos no SQLite!" in process.stdout:
+            st.success("Sucesso! O banco foi atualizado.")
+            st.rerun()
+        else:
+            st.warning("O script rodou, mas não confirmou o salvamento. Verifique os logs acima.")
+
+# Exibição (Grid)
+conn = get_connection()
+if conn:
+    try:
+        df = conn.execute("SELECT * FROM products ORDER BY created_at DESC").fetchall()
+        # Converte para dict para facilitar
+        cols_names = [description[0] for description in conn.execute("SELECT * FROM products LIMIT 1").description]
+        produtos = [dict(zip(cols_names, row)) for row in df]
         conn.close()
 
-        if not produtos:
-            st.info("Banco vazio. Clique no botão acima para coletar.")
-        else:
-            st.metric("Total de Produtos", len(produtos))
-            
+        if produtos:
+            st.metric("Produtos Rastreados", len(produtos))
             cols = st.columns(4)
-            for index, p in enumerate(produtos):
-                with cols[index % 4]:
+            for i, p in enumerate(produtos):
+                with cols[i % 4]:
                     with st.container(border=True):
-                        if p['img_link']:
-                            st.image(p['img_link'], use_container_width=True)
-                        
-                        st.markdown(f"**{p['product']}**")
-                        st.caption(f"{p['seller']}")
-                        
-                        st.markdown(f"De: ~~{format_currency(p['old_price'])}~~")
-                        st.markdown(f"**Por: {format_currency(p['current_price'])}**")
-                        
-                        st.link_button("Acessar", p['source'], use_container_width=True)
-                        st.caption(f"Atualizado em: {p['created_at']}")
+                        if p['img_link']: st.image(p['img_link'])
+                        st.markdown(f"**{p['product'][:40]}**")
+                        st.markdown(f"### R$ {p['current_price']:,.2f}")
+                        st.caption(f"Vendedor: {p['seller']}")
+                        st.link_button("Ver Oferta", p['source'])
+        else:
+            st.info("Banco de dados existe, mas está vazio.")
     except Exception as e:
         st.error(f"Erro ao ler banco: {e}")
 else:
-    st.warning("Arquivo de banco de dados não encontrado. Rode o scraper pela primeira vez.")
+    st.info("Banco de dados ainda não criado. Clique no botão acima.")
