@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 1. Configuração da Página (Título da aba do navegador e layout)
-st.set_page_config(page_title="Monitor de Preços", page_icon="🏷️", layout="wide")
+st.set_page_config(page_title="Monitor de Preços Mercado Livre", page_icon="🏷️", layout="wide")
 
 # --- FUNÇÕES DE FORMATAÇÃO (Substituindo os filtros do Jinja2) ---
 def format_currency(value):
@@ -132,3 +132,4 @@ if conn:
 else:
     # Caso o arquivo dados.db ainda não exista
     st.info("👋 Bem-vindo! Clique no botão **'Atualizar Dados'** na barra lateral para iniciar a primeira coleta.")
+
