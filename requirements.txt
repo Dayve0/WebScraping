@@ -1,6 +1,6 @@
 streamlit
-selenium
+requests
 beautifulsoup4
 pandas
-python-dotenv
 lxml
+python-dotenv
