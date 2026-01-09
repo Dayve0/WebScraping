@@ -1,23 +1,17 @@
 import time
 import os
 import sqlite3
-import pandas as pd
+import sys
 from selenium import webdriver
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+import pandas as pd
 
-# Configurações do Chrome (Headless para rodar na nuvem)
-def get_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless") # Obrigatório para servidores
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
-    # Tenta usar o driver instalado localmente ou pelo sistema
-    service = Service()
-    return webdriver.Chrome(service=service, options=chrome_options)
+# Garante encoding correto no terminal
+sys.stdout.reconfigure(encoding='utf-8')
 
 def organize(item):
     try:
@@ -25,34 +19,38 @@ def organize(item):
         source = item.select_one(".poly-component__title")["href"]
         seller = item.select_one(".poly-component__seller").text if item.select_one(".poly-component__seller") else 'Não informado'
         
-        # Preço antigo
-        old_price_element = item.select_one(".andes-money-amount__fraction")
-        old_price_str = old_price_element.text.strip() if old_price_element else "0"
+        # oldPrice
+        old_integer = item.select_one(".andes-money-amount__fraction").text.strip()
+        old_cents = item.select_one(".andes-money-amount__cents").text.strip() if item.select_one(".andes-money-amount__cents") else '00'
+        old_price_str = str(old_integer + "," + old_cents)
         
-        # Preço atual
         new_element = item.select_one(".poly-price__current")
-        new_price_str = new_element.select_one(".andes-money-amount__fraction").text.strip()
+        
+        # currentPrice
+        new_integer = new_element.select_one(".andes-money-amount__fraction").text.strip()
+        new_cents = new_element.select_one(".andes-money-amount__cents").text.strip() if new_element.select_one(".andes-money-amount__cents") else '00'
+        new_price_str = str(new_integer + "," + new_cents)
         
         image = item.select_one(".poly-component__picture")["src"]
-        
     except Exception as e: 
-        print(f"Erro ao processar item: {e}")
+        print("Erro ao extrair item")
         return None
     else:
          return {
             "product": title,
-            "seller": seller,
-            "old_price": old_price_str.replace('.', '').replace(',', '.'), # Limpeza básica
-            "current_price": new_price_str.replace('.', '').replace(',', '.'),
+            "seller": "Vendido por: " + seller,
+            "old_price": old_price_str,
+            "current_price": new_price_str,
             "source": source,
             "img_link": image
         }
 
 def setup_db():
+    # Conecta ou cria o arquivo dados.db
     conn = sqlite3.connect('dados.db')
     cursor = conn.cursor()
     
-    # Cria a tabela se não existir (Sintaxe SQLite)
+    # Cria tabela compatível com SQLite
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,51 +67,92 @@ def setup_db():
     conn.commit()
     return conn
 
-# --- Início do Script Principal ---
+# --- INÍCIO DO PROCESSO ---
 
-URL = "https://lista.mercadolivre.com.br/monitor-gamer" # Defina sua URL padrão aqui
+load_dotenv()
+url = os.environ.get("URL", "https://lista.mercadolivre.com.br/monitor-gamer") 
 
-print("Iniciando scraping...")
-driver = get_driver()
-driver.get(URL)
-time.sleep(3)
+print("Iniciando driver...")
 
-# Scroll para carregar itens
-driver.execute_script("window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });")
-time.sleep(2)
+service = Service() 
+chrome_options = Options()
+# Configurações obrigatórias para rodar em servidor (Headless)
+chrome_options.add_argument("--headless") 
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+# User agent para não ser bloqueado
+chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
-# Pegando HTML
-html_base = driver.page_source
-driver.quit()
+driver = webdriver.Chrome(service=service, options=chrome_options)
 
-# Processando com BeautifulSoup
+try:
+    print(f"Acessando {url}...")
+    driver.get(url)
+    time.sleep(3)
+    
+    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight / 2, behavior: 'smooth' });")
+    time.sleep(2)
+    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });")
+    time.sleep(2)
+
+    # Pega o HTML total
+    html_base = driver.page_source
+finally:
+    driver.quit()
+
+print("Processando HTML...")
 soup = BeautifulSoup(html_base, "lxml")
-items = soup.select(".andes-card.poly-card") # Seletor pode variar, mantive o padrão genérico
+
+# Seletor genérico que costuma funcionar (pode variar)
+items = soup.select(".andes-card.poly-card")
 produtos = [organize(item) for item in items if organize(item) is not None]
 
-# Salvando no Banco
-if produtos:
+if not produtos:
+    print("Nenhum produto encontrado. Verifique os seletores CSS.")
+else:
+    # Tratamento de dados com Pandas
+    df = pd.DataFrame(produtos)
+    
+    df["old_price"] = (
+        df["old_price"]
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
+
+    df["current_price"] = (
+        df["current_price"]
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
+
+    # Prepara para salvar no SQLite
     conn = setup_db()
     cursor = conn.cursor()
     
-    # Query SQLite para Inserir ou Atualizar (Upsert)
+    # Query específica do SQLite para Upsert (Atualizar se existir)
     sql = """
-    INSERT INTO products (product, old_price, current_price, seller, source, img_link)
+    INSERT INTO products (product, seller, old_price, current_price, source, img_link)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(product, source) DO UPDATE SET
         current_price = excluded.current_price,
         created_at = CURRENT_TIMESTAMP
     """
     
-    # Convertendo lista de dicts para lista de tuplas
+    # Ordem correta das colunas conforme a query acima
     rows = [
-        (p['product'], p['old_price'], p['current_price'], p['seller'], p['source'], p['img_link']) 
-        for p in produtos
+        (p['product'], p['seller'], row.old_price, row.current_price, p['source'], p['img_link'])
+        for p, row in zip(produtos, df.itertuples())
     ]
     
-    cursor.executemany(sql, rows)
-    conn.commit()
-    conn.close()
-    print(f"{len(produtos)} produtos processados e salvos no SQLite.")
-else:
-    print("Nenhum produto encontrado.")
+    try:
+        cursor.executemany(sql, rows)
+        conn.commit()
+        print(f"Sucesso! {len(rows)} produtos processados.")
+    except Exception as e:
+        print(f"Erro ao salvar no banco: {e}")
+    finally:
+        conn.close()
+
+print("Fim do scraping.")
