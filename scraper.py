@@ -1,168 +1,186 @@
 import time
 import os
-import sqlite3
-import sys
-import random
+import sqlite3  # Trocamos mysql.connector por sqlite3
 from selenium import webdriver
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium_stealth import stealth
+from selenium.webdriver.common.by import By
+import pandas as pd
+import sys
 
+# Configuração para logs no Streamlit
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- CONFIGURAÇÃO DO BANCO ---
-def setup_db():
-    conn = sqlite3.connect('dados.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product TEXT,
-        old_price REAL,
-        current_price REAL,
-        seller TEXT,
-        source TEXT,
-        img_link TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        is_demo BOOLEAN DEFAULT 0,
-        UNIQUE(product, source)
-    )
-    """)
-    # Coluna is_demo ajuda a saber se o dado é real ou fake
+# Declarando funções que vão ser usadas no scraping
+def organize(item):
     try:
-        cursor.execute("ALTER TABLE products ADD COLUMN is_demo BOOLEAN DEFAULT 0")
-    except:
-        pass # Coluna já existe
+        title = item.select_one(".poly-component__title").text
+        source = item.select_one(".poly-component__title")["href"]
+        seller = item.select_one(".poly-component__seller").text if item.select_one(".poly-component__seller") else 'Não informado'
         
-    conn.commit()
-    return conn
-
-# --- FUNÇÃO GERADORA DE DADOS MOCK (FAKE) ---
-def generate_mock_data():
-    """Gera dados falsos para o portfólio não ficar vazio quando houver bloqueio"""
-    print("⚠️ ATIVANDO MODO DEMO: Gerando dados simulados para portfólio...")
-    
-    mock_products = [
-        ("Monitor Gamer LG UltraGear 24'", "Loja Oficial LG", 1600.00, 1299.00, "https://mercadolivre.com.br", "https://http2.mlstatic.com/D_NQ_NP_895340-MLA46610859669_072021-O.webp"),
-        ("Monitor Samsung Odyssey G3", "Kabum", 1800.00, 1450.00, "https://mercadolivre.com.br", "https://http2.mlstatic.com/D_NQ_NP_965682-MLA48643836371_122021-O.webp"),
-        ("Monitor Gamer AOC Hero 144hz", "Mercado Livre", 1100.00, 989.90, "https://mercadolivre.com.br", "https://http2.mlstatic.com/D_NQ_NP_662095-MLA44336048564_122020-O.webp"),
-        ("Monitor Dell Alienware 25'", "Dell Oficial", 3500.00, 3199.00, "https://mercadolivre.com.br", "https://http2.mlstatic.com/D_NQ_NP_934446-MLA43722744822_102020-O.webp"),
-        ("Monitor Pichau Centauri", "Pichau", 900.00, 799.00, "https://mercadolivre.com.br", "https://http2.mlstatic.com/D_NQ_NP_798544-MLA47864350993_102021-O.webp"),
-    ]
-    
-    conn = setup_db()
-    cursor = conn.cursor()
-    
-    # Limpa dados antigos para mostrar o Demo limpo
-    cursor.execute("DELETE FROM products")
-    
-    for p in mock_products:
-        # Adiciona variação aleatória no preço para parecer dinâmico a cada clique
-        variation = random.uniform(0.95, 1.05)
-        price = p[3] * variation
-        
-        cursor.execute("""
-        INSERT INTO products (product, seller, old_price, current_price, source, img_link, is_demo)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-        """, (p[0], p[1], p[2], price, p[4], p[5]))
-        
-    conn.commit()
-    conn.close()
-    print("✅ Dados de demonstração inseridos com sucesso!")
-
-# --- SCRAPER REAL ---
-def run_scraper():
-    print("--- INICIANDO TENTATIVA DE SCRAPING ---")
-    
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-
-    service = Service()
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-
-    stealth(driver,
-        languages=["pt-BR", "pt"],
-        vendor="Google Inc.",
-        platform="Win32",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
-        fix_hairline=True,
-    )
-
-    url = os.environ.get("URL", "https://lista.mercadolivre.com.br/monitor-gamer")
-    
-    try:
-        driver.get(url)
-        time.sleep(random.uniform(3, 5))
-        
-        # Check básico de bloqueio de título
-        print(f"Título da página: {driver.title}")
-        
-        soup = BeautifulSoup(driver.page_source, "lxml")
-        
-        # Tenta coletores
-        items = soup.select("div.poly-card")
-        if not items: items = soup.select("li.ui-search-layout__item")
-        if not items: items = soup.select("div.andes-card") # Última tentativa
-
-        print(f"Itens encontrados: {len(items)}")
-
-        # LÓGICA DE FAIL-SAFE
-        # Se achou menos de 3 itens, consideramos bloqueio ou erro
-        if len(items) < 3:
-            print("❌ Bloqueio detectado ou HTML desconhecido.")
-            generate_mock_data() # <--- CHAMA O PLANO B
-            return
-
-        # Se passou daqui, o scraping funcionou!
-        produtos_processados = []
-        for item in items:
-            try:
-                # Lógica de extração simplificada para brevidade
-                title_tag = item.select_one("a.poly-component__title, h2.ui-search-item__title")
-                if not title_tag: continue
-                title = title_tag.text.strip()
-                link = title_tag.get("href")
-                
-                price_tag = item.select_one(".andes-money-amount__fraction")
-                current_price = float(price_tag.text.replace(".", "").replace(",", ".")) if price_tag else 0
-                
-                img_tag = item.select_one("img")
-                img_link = img_tag.get("data-src") or img_tag.get("src") or ""
-                
-                if current_price > 0:
-                    produtos_processados.append((title, "Mercado Livre", 0, current_price, link, img_link, 0)) # 0 = Real Data
-            except:
-                continue
-
-        if produtos_processados:
-            conn = setup_db()
-            cursor = conn.cursor()
-            # Limpa Demo anterior se houver
-            cursor.execute("DELETE FROM products WHERE is_demo = 1")
-            
-            cursor.executemany("""
-            INSERT INTO products (product, seller, old_price, current_price, source, img_link, is_demo)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(product, source) DO UPDATE SET current_price=excluded.current_price
-            """, produtos_processados)
-            conn.commit()
-            conn.close()
-            print(f"✅ Sucesso Real! {len(produtos_processados)} produtos salvos.")
+        # oldPrice
+        old_element = item.select_one(".andes-money-amount__fraction")
+        if old_element:
+            old_integer = old_element.text.strip()
+            cents_el = item.select_one(".andes-money-amount__cents")
+            old_cents = cents_el.text.strip() if cents_el else '00'
+            old_price_str = f"{old_integer},{old_cents}"
         else:
-             generate_mock_data() # Fallback se falhar no loop
+            old_price_str = "0,00" # Valor padrão caso não tenha preço antigo
+        
+        # currentPrice
+        new_element = item.select_one(".poly-price__current")
+        if new_element:
+            new_integer = new_element.select_one(".andes-money-amount__fraction").text.strip()
+            cents_el = new_element.select_one(".andes-money-amount__cents")
+            new_cents = cents_el.text.strip() if cents_el else '00'
+            new_price_str = f"{new_integer},{new_cents}"
+        else:
+            return None # Se não tem preço atual, ignora o item
+        
+        image_tag = item.select_one(".poly-component__picture")
+        image = image_tag["src"] if image_tag else ""
 
-    except Exception as e:
-        print(f"Erro: {e}")
-        generate_mock_data() # Fallback em caso de crash
+    except Exception as e: 
+        print(f"Erro ao organizar item: {e}")
+        return None # Retorna None para filtrar depois
+    else:
+         return {
+            "product": title,
+            "seller": "Vendido por: " + seller,
+            "old_price": old_price_str,
+            "current_price": new_price_str,
+            "source": source,
+            "img_link": image
+        }
+
+def connectDb():
+    try:
+        # SQLite conecta a um arquivo local (.db)
+        conn = sqlite3.connect('dados.db')
+        cursor = conn.cursor()
+
+        # Cria a tabela se não existir (Sintaxe SQLite)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product TEXT,
+            old_price REAL,
+            current_price REAL,
+            seller TEXT,
+            source TEXT,
+            img_link TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(product, source)
+        )
+        """)
+        conn.commit()
+        
+    except Exception as e: 
+        raise e
+    else:
+        print("Conectado ao SQLite com sucesso")
+        return conn, cursor
+
+# --- INÍCIO DO PROCESSO ---
+
+load_dotenv()
+url = os.environ.get("URL", "https://www.mercadolivre.com.br/ofertas#nav-header") 
+
+# Configurações do Chrome para rodar no Streamlit Cloud (Headless)
+chrome_options = Options()
+chrome_options.add_argument("--headless") # Obrigatório na nuvem
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument("--disable-gpu")
+service = Service() 
+
+print("Iniciando WebDriver...")
+driver = webdriver.Chrome(service=service, options=chrome_options)
+
+try:
+    print(f"Acessando {url}...")
+    driver.get(url)
+    time.sleep(3)
+
+    # Scrolls
+    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight / 2, behavior: 'smooth' });")
+    time.sleep(2)
+    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });")
+    time.sleep(2)
+
+    # Pegando HTML
+    # OBS: O seletor 'items-with-smart-groups' pode não existir dependendo da busca.
+    # Tente pegar o body inteiro se falhar.
+    try:
+        element = driver.find_element(By.CLASS_NAME, 'items-with-smart-groups')
+        html_base = element.get_attribute('outerHTML')
+    except:
+        print("Container específico não encontrado, pegando HTML total.")
+        html_base = driver.page_source
+
+finally:
+    driver.quit()
+
+# 2. Processando com BeautifulSoup
+soup = BeautifulSoup(html_base, "lxml")
+
+# Seletores do ML mudam com frequência, mantive o seu
+items = soup.select(".andes-card.poly-card")
+
+# Filtra itens None (que deram erro na função organize)
+produtos = [organize(item) for item in items if organize(item) is not None]
+
+if len(produtos) == 0:
+    print("Nenhum produto encontrado. Verifique os seletores CSS.")
+else:
+    # Salvando itens num DF
+    dataFrame_full = pd.DataFrame(produtos)
+
+    # Limpeza de dados (Pandas)
+    dataFrame_full["old_price"] = (
+        dataFrame_full["old_price"]
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
+
+    dataFrame_full["current_price"] = (
+        dataFrame_full["current_price"]
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
+
+    # Preparando dados para SQLite
+    # Importante: A ordem das colunas no DF deve bater com a Query abaixo
+    rows = list(
+        dataFrame_full[["product", "old_price", "current_price", "seller", "source", "img_link"]]
+        .itertuples(index=False, name=None)
+    )
+
+    # Query SQLite (Upsert)
+    # ? é o placeholder do SQLite (no MySQL era %s)
+    sql = """
+    INSERT INTO products (product, old_price, current_price, seller, source, img_link)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(product, source) DO UPDATE SET
+        current_price = excluded.current_price,
+        created_at = CURRENT_TIMESTAMP
+    """
+
+    conn, cursor = connectDb()
+
+    try:
+        cursor.executemany(sql, rows)
+        conn.commit()
+        print(f"{cursor.rowcount} registros processados.")
+    except Exception as e: 
+        print(f"Erro ao salvar no banco: {e}")
     finally:
-        driver.quit()
+        cursor.close()
+        conn.close()
 
-if __name__ == "__main__":
-    run_scraper()
+print("Fim do scraping.")
