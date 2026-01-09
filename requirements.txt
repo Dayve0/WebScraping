@@ -1,0 +1,7 @@
+flask
+selenium
+beautifulsoup4
+pandas
+mysql-connector-python
+python-dotenv
+lxml
