@@ -1,69 +1,62 @@
 import streamlit as st
-import mysql.connector
-import pandas as pd
+import sqlite3
 import subprocess
+import pandas as pd
 import os
 
 # Configuração da página
-st.set_page_config(page_title="Monitor de Preços", layout="wide")
+st.set_page_config(page_title="Monitor ML", layout="wide")
 
-# Função para conectar no banco
-# OBS: No Streamlit Cloud, 'localhost' NÃO funciona porque o banco não está lá.
-# Você precisará de um banco na nuvem ou mudar para SQLite.
+# Função para conectar no SQLite
 def get_connection():
-    # Tenta pegar as credenciais dos "Secrets" do Streamlit ou usa o padrão (para teste local)
-    return mysql.connector.connect(
-        host=st.secrets.get("DB_HOST", "localhost"),
-        user=st.secrets.get("DB_USER", "root"),
-        password=st.secrets.get("DB_PASS", "Tomato@mysql08"),
-        database=st.secrets.get("DB_NAME", "banco_dayve")
-    )
+    return sqlite3.connect('dados.db')
 
-st.title("🛒 Produtos Monitorados")
+st.title("🛒 Monitor de Preços - SQLite")
 
 # Botão para rodar o Scraper
-if st.button("🔄 Rodar Scraper Agora"):
-    with st.spinner('Buscando dados no Mercado Livre...'):
+if st.button("🔄 Atualizar Dados"):
+    with st.spinner('Rodando scraper...'):
         try:
-            # Roda o script e captura a saída
+            # Chama o scraper.py
             result = subprocess.run(["python", "scraper.py"], capture_output=True, text=True)
+            # Mostra logs para debug
+            st.text(result.stdout)
             if result.returncode == 0:
-                st.success("Scraper executado com sucesso!")
+                st.success("Dados atualizados!")
             else:
-                st.error(f"Erro ao rodar scraper: {result.stderr}")
+                st.error("Erro no script.")
+                st.code(result.stderr)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao executar: {e}")
 
-# Exibição dos produtos
-try:
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT product, old_price, current_price, seller, source, img_link, created_at
-        FROM products
-        ORDER BY created_at DESC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
+# Exibição dos dados
+if os.path.exists('dados.db'):
+    try:
+        conn = get_connection()
+        # Lendo direto com Pandas (mais fácil)
+        df = pd.read_sql_query("SELECT * FROM products ORDER BY created_at DESC", conn)
+        conn.close()
 
-    if rows:
-        # Cria um grid de cards (substituindo seu HTML/Tailwind)
-        cols = st.columns(4) # 4 colunas como no seu HTML
-        
-        for i, produto in enumerate(rows):
-            with cols[i % 4]: # Distribui entre as colunas
-                with st.container(border=True):
-                    st.image(produto['img_link'], use_container_width=True)
-                    st.markdown(f"**{produto['product'][:50]}...**")
-                    st.caption(produto['seller'])
-                    
-                    st.markdown(f"De: ~~R$ {produto['old_price']}~~")
-                    st.markdown(f"**Por: R$ {produto['current_price']}**")
-                    
-                    st.link_button("Acessar", produto['source'])
-                    st.caption(f"Coletado em: {produto['created_at']}")
-    else:
-        st.warning("Nenhum produto encontrado no banco de dados.")
-
-except Exception as e:
-    st.error(f"Erro de conexão com o banco: {e}")
+        if not df.empty:
+            st.metric("Total de Produtos", len(df))
+            
+            # Grid de Produtos
+            cols = st.columns(4)
+            for index, row in df.iterrows():
+                with cols[index % 4]:
+                    with st.container(border=True):
+                        st.image(row['img_link'], use_container_width=True)
+                        st.markdown(f"**{row['product'][:40]}...**")
+                        
+                        # Formatação de preço
+                        preco = f"R$ {row['current_price']:,.2f}"
+                        st.markdown(f"### {preco}")
+                        
+                        st.link_button("Ver no Site", row['source'])
+        else:
+            st.info("Banco de dados vazio. Clique em 'Atualizar Dados'.")
+            
+    except Exception as e:
+        st.error(f"Erro ao ler banco: {e}")
+else:
+    st.warning("Arquivo 'dados.db' ainda não existe. Rode o scraper pela primeira vez.")
