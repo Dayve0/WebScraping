@@ -7,50 +7,13 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-import pandas as pd
 
-# Garante encoding correto no terminal
+# Garante que os acentos apareçam nos logs do Streamlit
 sys.stdout.reconfigure(encoding='utf-8')
 
-def organize(item):
-    try:
-        title = item.select_one(".poly-component__title").text
-        source = item.select_one(".poly-component__title")["href"]
-        seller = item.select_one(".poly-component__seller").text if item.select_one(".poly-component__seller") else 'Não informado'
-        
-        # oldPrice
-        old_integer = item.select_one(".andes-money-amount__fraction").text.strip()
-        old_cents = item.select_one(".andes-money-amount__cents").text.strip() if item.select_one(".andes-money-amount__cents") else '00'
-        old_price_str = str(old_integer + "," + old_cents)
-        
-        new_element = item.select_one(".poly-price__current")
-        
-        # currentPrice
-        new_integer = new_element.select_one(".andes-money-amount__fraction").text.strip()
-        new_cents = new_element.select_one(".andes-money-amount__cents").text.strip() if new_element.select_one(".andes-money-amount__cents") else '00'
-        new_price_str = str(new_integer + "," + new_cents)
-        
-        image = item.select_one(".poly-component__picture")["src"]
-    except Exception as e: 
-        print("Erro ao extrair item")
-        return None
-    else:
-         return {
-            "product": title,
-            "seller": "Vendido por: " + seller,
-            "old_price": old_price_str,
-            "current_price": new_price_str,
-            "source": source,
-            "img_link": image
-        }
-
 def setup_db():
-    # Conecta ou cria o arquivo dados.db
     conn = sqlite3.connect('dados.db')
     cursor = conn.cursor()
-    
-    # Cria tabela compatível com SQLite
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,92 +30,115 @@ def setup_db():
     conn.commit()
     return conn
 
-# --- INÍCIO DO PROCESSO ---
-
-load_dotenv()
-url = os.environ.get("URL", "https://lista.mercadolivre.com.br/monitor-gamer") 
-
-print("Iniciando driver...")
-
-service = Service() 
-chrome_options = Options()
-# Configurações obrigatórias para rodar em servidor (Headless)
-chrome_options.add_argument("--headless") 
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-# User agent para não ser bloqueado
-chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-driver = webdriver.Chrome(service=service, options=chrome_options)
-
-try:
-    print(f"Acessando {url}...")
-    driver.get(url)
-    time.sleep(3)
-    
-    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight / 2, behavior: 'smooth' });")
-    time.sleep(2)
-    driver.execute_script("window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });")
-    time.sleep(2)
-
-    # Pega o HTML total
-    html_base = driver.page_source
-finally:
-    driver.quit()
-
-print("Processando HTML...")
-soup = BeautifulSoup(html_base, "lxml")
-
-# Seletor genérico que costuma funcionar (pode variar)
-items = soup.select(".andes-card.poly-card")
-produtos = [organize(item) for item in items if organize(item) is not None]
-
-if not produtos:
-    print("Nenhum produto encontrado. Verifique os seletores CSS.")
-else:
-    # Tratamento de dados com Pandas
-    df = pd.DataFrame(produtos)
-    
-    df["old_price"] = (
-        df["old_price"]
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-        .astype(float)
-    )
-
-    df["current_price"] = (
-        df["current_price"]
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-        .astype(float)
-    )
-
-    # Prepara para salvar no SQLite
-    conn = setup_db()
-    cursor = conn.cursor()
-    
-    # Query específica do SQLite para Upsert (Atualizar se existir)
-    sql = """
-    INSERT INTO products (product, seller, old_price, current_price, source, img_link)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(product, source) DO UPDATE SET
-        current_price = excluded.current_price,
-        created_at = CURRENT_TIMESTAMP
-    """
-    
-    # Ordem correta das colunas conforme a query acima
-    rows = [
-        (p['product'], p['seller'], row.old_price, row.current_price, p['source'], p['img_link'])
-        for p, row in zip(produtos, df.itertuples())
-    ]
-    
+# Função para limpar preços
+def clean_price(price_str):
+    if not price_str: return 0.0
     try:
-        cursor.executemany(sql, rows)
-        conn.commit()
-        print(f"Sucesso! {len(rows)} produtos processados.")
-    except Exception as e:
-        print(f"Erro ao salvar no banco: {e}")
-    finally:
-        conn.close()
+        # Remove R$, espaços, e converte formato BR (1.000,00) para US (1000.00)
+        clean = price_str.replace("R$", "").replace(" ", "").strip()
+        clean = clean.replace(".", "").replace(",", ".")
+        return float(clean)
+    except:
+        return 0.0
 
-print("Fim do scraping.")
+def run_scraper():
+    print("--- INICIANDO SCRAPER ---")
+    
+    # 1. Configuração do Chrome
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    # User-Agent rotativo ou comum para parecer PC real
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    service = Service()
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    
+    url = os.environ.get("URL", "https://lista.mercadolivre.com.br/monitor-gamer")
+    print(f"Acessando URL: {url}")
+
+    try:
+        driver.get(url)
+        time.sleep(3) # Espera carregar
+        
+        # Tenta pegar o título da página para ver se carregou
+        print(f"Título da página encontrada: {driver.title}")
+        
+        # Scroll para carregar imagens
+        driver.execute_script("window.scrollTo(0, 500);")
+        time.sleep(1)
+        
+        html = driver.page_source
+        soup = BeautifulSoup(html, "lxml")
+        
+        # 2. Estratégia Multi-Seletor (O segredo para não falhar)
+        # O ML usa classes diferentes dependendo do servidor. Tentamos todas.
+        
+        # Opção A: Layout Novo (Poly)
+        items = soup.select(".poly-card")
+        tipo_layout = "Poly (Novo)"
+        
+        # Opção B: Layout Clássico (Search Layout)
+        if not items:
+            items = soup.select(".ui-search-layout__item")
+            tipo_layout = "Search Layout (Antigo)"
+            
+        print(f"Layout detectado: {tipo_layout} - Itens encontrados: {len(items)}")
+
+        produtos_processados = []
+
+        for item in items:
+            try:
+                # Tenta achar o link e título (são essenciais)
+                link_tag = item.select_one("a.poly-component__title, a.ui-search-link")
+                if not link_tag: continue
+                
+                title = link_tag.text.strip()
+                link = link_tag['href']
+                
+                # Preço (Tenta vários seletores)
+                price_tag = item.select_one(".poly-price__current .andes-money-amount__fraction, .ui-search-price__second-line .andes-money-amount__fraction")
+                price_val = clean_price(price_tag.text) if price_tag else 0.0
+                
+                # Imagem
+                img_tag = item.select_one("img.poly-component__picture, img.ui-search-result-image__element")
+                img_link = img_tag.get('src') if img_tag else ""
+                
+                # Vendedor (Opcional)
+                seller_tag = item.select_one(".poly-component__seller")
+                seller = seller_tag.text.strip() if seller_tag else "Vendedor Desconhecido"
+
+                produtos_processados.append((title, seller, 0.0, price_val, link, img_link))
+                
+            except Exception as e:
+                continue # Pula item com erro sem quebrar o resto
+
+        print(f"Produtos extraídos com sucesso: {len(produtos_processados)}")
+
+        # 3. Salvar no Banco
+        if produtos_processados:
+            conn = setup_db()
+            cursor = conn.cursor()
+            
+            sql = """
+            INSERT INTO products (product, seller, old_price, current_price, source, img_link)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(product, source) DO UPDATE SET
+                current_price = excluded.current_price,
+                created_at = CURRENT_TIMESTAMP
+            """
+            cursor.executemany(sql, produtos_processados)
+            conn.commit()
+            conn.close()
+            print("Dados salvos no SQLite!")
+        else:
+            print("ALERTA: Nenhum produto extraído. O HTML pode ter mudado ou fomos bloqueados.")
+
+    except Exception as e:
+        print(f"ERRO CRÍTICO NO SCRAPER: {e}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    run_scraper()
