@@ -100,6 +100,9 @@ url = os.environ.get("URL","https://www.google.com/")
 # Inicializando serviço e configurações
 service = Service() 
 chrome_options = Options()
+chrome_options.add_argument("--headless") # Obrigatório na nuvem (sem interface gráfica)
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
 
 # Inicializando o driver
 driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -176,6 +179,7 @@ except Exception as e:
 finally:
     cursor.close()
     conn.close()
+
 
 
 print("Fim do scraping.")
