@@ -1,44 +1,35 @@
 import streamlit as st
-import mysql.connector
+import sqlite3
 import subprocess
 import sys
 import os
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração da página (deve ser o primeiro comando Streamlit)
 st.set_page_config(page_title="Produtos Scraping", layout="wide")
 
-# Funções auxiliares de formatação (substituindo os filtros do Jinja2)
+# Funções de formatação
 def format_currency(value):
-    if value is None:
-        return "R$ 0,00"
+    if value is None: return "R$ 0,00"
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_date(value):
-    if not value:
-        return ""
-    return value.strftime("%d/%m/%Y %H:%M")
+    if not value: return ""
+    # Se vier como string do SQLite, tenta converter ou exibir direto
+    return str(value)
 
-# Função de conexão com o banco
+# Conexão SQLite
 def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="Tomato@mysql08", # Idealmente, use os.getenv("DB_PASSWORD")
-        database="banco_dayve"
-    )
+    return sqlite3.connect('dados.db')
 
-# Título da Aplicação
-st.title("🛒 Produtos Coletados")
+st.title("🛒 Produtos Coletados (SQLite)")
 
-# Botão para rodar o Scraper
+# Botão de execução
 if st.button("🔄 Rodar Scraper Novamente"):
-    with st.spinner("Rodando o robô de captura... aguarde."):
+    with st.spinner("Rodando o robô... aguarde."):
         try:
-            # Usa sys.executable para garantir que rode no mesmo ambiente virtual
+            # sys.executable garante que usa o python correto
             result = subprocess.run(
                 [sys.executable, "scraper.py"], 
                 capture_output=True, 
@@ -47,56 +38,50 @@ if st.button("🔄 Rodar Scraper Novamente"):
             )
             
             if result.returncode == 0:
-                st.success("Scraper executado com sucesso!")
-                st.rerun() # Recarrega a página para mostrar os dados novos
+                st.success("Atualizado com sucesso!")
+                st.rerun()
             else:
-                st.error("Erro ao rodar o scraper.")
-                st.code(result.stderr) # Mostra o erro na tela para debug
+                st.error("Erro no scraper:")
+                st.code(result.stderr) # Mostra o erro real
+                st.text("Logs de saída:")
+                st.code(result.stdout)
         except Exception as e:
-            st.error(f"Erro ao tentar executar o script: {e}")
+            st.error(f"Erro crítico: {e}")
 
-# Exibição dos Produtos
-try:
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    
-    cursor.execute("""
-        SELECT product, old_price, current_price, seller, source, img_link, created_at
-        FROM products
-        ORDER BY created_at DESC
-    """)
-    produtos = cursor.fetchall()
-    
-    conn.close()
-
-    if not produtos:
-        st.info("Nenhum produto encontrado no banco de dados.")
-    else:
-        # Cria um grid com 4 colunas (igual ao seu HTML grid-cols-4)
-        cols = st.columns(4)
+# Exibir dados
+if os.path.exists('dados.db'):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Retorna dicionário para facilitar
+        cursor.row_factory = sqlite3.Row 
         
-        for index, p in enumerate(produtos):
-            # O operador % 4 garante que distribua entre as 4 colunas ciclicamente
-            with cols[index % 4]:
-                # st.container(border=True) cria o efeito de "Card"
-                with st.container(border=True):
-                    # Imagem
-                    if p['img_link']:
-                        st.image(p['img_link'], use_container_width=True)
-                    
-                    # Título e Vendedor
-                    st.markdown(f"**{p['product']}**")
-                    st.caption(f"{p['seller']}")
-                    
-                    # Preços
-                    st.markdown(f"De: ~~{format_currency(p['old_price'])}~~")
-                    st.markdown(f"**Por: {format_currency(p['current_price'])}**")
-                    
-                    # Link
-                    st.link_button("Acessar Oferta", p['source'], use_container_width=True)
-                    
-                    # Data
-                    st.text(f"Coletado: {format_date(p['created_at'])}")
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM products ORDER BY created_at DESC")
+        produtos = cursor.fetchall()
+        conn.close()
 
-except mysql.connector.Error as err:
-    st.error(f"Erro de conexão com o banco de dados: {err}")
+        if not produtos:
+            st.info("Banco vazio. Clique no botão acima para coletar.")
+        else:
+            st.metric("Total de Produtos", len(produtos))
+            
+            cols = st.columns(4)
+            for index, p in enumerate(produtos):
+                with cols[index % 4]:
+                    with st.container(border=True):
+                        if p['img_link']:
+                            st.image(p['img_link'], use_container_width=True)
+                        
+                        st.markdown(f"**{p['product']}**")
+                        st.caption(f"{p['seller']}")
+                        
+                        st.markdown(f"De: ~~{format_currency(p['old_price'])}~~")
+                        st.markdown(f"**Por: {format_currency(p['current_price'])}**")
+                        
+                        st.link_button("Acessar", p['source'], use_container_width=True)
+                        st.caption(f"Atualizado em: {p['created_at']}")
+    except Exception as e:
+        st.error(f"Erro ao ler banco: {e}")
+else:
+    st.warning("Arquivo de banco de dados não encontrado. Rode o scraper pela primeira vez.")
