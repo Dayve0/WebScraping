@@ -44,20 +44,18 @@ def organize(item):
         seller = seller_tag.text.strip() if seller_tag else 'Não informado'
         
         # Preços
-        price_tag = item.select_one(".andes-money-amount__fraction")
-        if not price_tag: return None
-
-        current_integer = price_tag.text.strip()
-        cents_el = item.select_one(".andes-money-amount__cents")
-        current_cents = cents_el.text.strip() if cents_el else '00'
-        new_price_str = f"{current_integer},{current_cents}"
-
-        old_price_str = "0,00"
         prices = item.select(".andes-money-amount__fraction")
-        if len(prices) > 1:
-            old_integer = prices[0].text.strip()
-            old_price_str = f"{old_integer},00" 
+        cents = item.select(".andes-money-amount__cents")
+        if not prices: return None
+        
+        old_integer = prices[0].text.strip()
+        old_cents = cents[0].text.strip() if cents[0] else '00'
+        old_price_str = f"{old_integer},{old_cents}"
 
+        current_integer = prices[1].text.strip()
+        current_cents = cents[1].text.strip() if cents[1] else '00'
+        new_price_str = f"{current_integer},{current_cents}"
+        
         image_tag = item.select_one("img")
         image = ""
         if image_tag:
